@@ -157,13 +157,15 @@ const COL_PATTERNS={
   id:[/^id$/i,/^id（子）$/,/^id\(子\)$/,/個体id/i,/^子id/i,/^id/i],
   sire:[/オス親\s*id/i,/^父/,/父.*id/i,/sire/i,/male.*parent/i,/♂/],
   dam:[/メス親\s*id/i,/^母/,/母.*id/i,/dam/i,/female.*parent/i,/♀/],
-  line:[/採卵系統/,/^系統$/,/strain/i,/^line$/i]
+  line:[/採卵系統/,/^系統$/,/strain/i,/^line$/i],
+  sireLine:[/オス親系統/,/父.*系統/,/♂.*系統/],
+  damLine:[/メス親系統/,/母.*系統/,/♀.*系統/]
 };
 function detectCols(header){
-  const out={id:-1,sire:-1,dam:-1,line:-1};
+  const out={id:-1,sire:-1,dam:-1,line:-1,sireLine:-1,damLine:-1};
   header.forEach((h,i)=>{
     const s=String(h??'').trim(); if(!s) return;
-    ['id','sire','dam','line'].forEach(k=>{
+    ['sireLine','damLine','id','sire','dam','line'].forEach(k=>{
       if(out[k]!==-1) return;
       if(COL_PATTERNS[k].some(re=>re.test(s))) out[k]=i;
     });
@@ -185,14 +187,33 @@ function parseSheet(rows,fileName,fallbackLine){
     const idN=normId(r[cols.id]); if(!idN) continue;
     const sN=normId(r[cols.sire]), dN=normId(r[cols.dam]);
     const line=(cols.line!==-1&&r[cols.line])?String(r[cols.line]).trim():fallbackLine;
+    const gl=j=>(j!==-1&&j<r.length&&r[j])?String(r[j]).trim():null;
     records.push({id:idN.id,sire:sN?sN.id:null,dam:dN?dN.id:null,
+      sireLine:gl(cols.sireLine),damLine:gl(cols.damLine),
       line:line||fallbackLine,hadLine:cols.line!==-1&&!!r[cols.line],row:i+1,file:fileName,
       multi:idN.multi||(sN&&sN.multi)||(dN&&dN.multi)});
   }
   return {records,cols,headerRow:hi+1};
 }
 
+function normLine(s){
+  if(s===null||s===undefined) return null;
+  let t=toHalf(String(s)).trim();
+  t=t.replace(/[（(][^）)]*[）)]/g,'').trim();   // 「TG030(rose)」→「TG030」
+  return t||null;
+}
 function buildPedigree(allRecords){
+  // 表記ゆれの統合: 大小文字だけ違うラベルは、出現数の多い表記に寄せる
+  const cnt=new Map();
+  allRecords.forEach(r=>{ const l=normLine(r.line); if(l) cnt.set(l,(cnt.get(l)||0)+1); });
+  const canon=new Map();
+  [...cnt.entries()].sort((a,b)=>b[1]-a[1]).forEach(([l])=>{
+    const k=l.toLowerCase();
+    if(!canon.has(k)) canon.set(k,l);
+  });
+  const CL=s=>{ const l=normLine(s); return l?(canon.get(l.toLowerCase())||l):null; };
+  allRecords=allRecords.map(r=>Object.assign({},r,{
+    line:CL(r.line), sireLine:CL(r.sireLine), damLine:CL(r.damLine)}));
   const ped=new Map(), meta=new Map(), issues=[], byId=new Map();
   allRecords.forEach(r=>{ if(!byId.has(r.id)) byId.set(r.id,[]); byId.get(r.id).push(r); });
   byId.forEach((list,id)=>{
@@ -216,14 +237,44 @@ function buildPedigree(allRecords){
     ped.set(id,{sire,dam});
     meta.set(id,{line:base.line,file:base.file,row:base.row});
   });
+  // 親IDに付記された系統ラベルを回収（例: 「オス親系統=NC, オス親ID=221018im04」）
+  const parentLine=new Map();
+  allRecords.forEach(r=>{
+    if(r.sire&&r.sireLine&&!parentLine.has(r.sire)) parentLine.set(r.sire,r.sireLine);
+    if(r.dam&&r.damLine&&!parentLine.has(r.dam)) parentLine.set(r.dam,r.damLine);
+  });
+  meta.forEach((m,id)=>{ if((!m.line||m.line==='不明')&&parentLine.has(id)) m.line=parentLine.get(id); });
   const orphans=new Set();
   ped.forEach(n=>[n.sire,n.dam].forEach(p=>{ if(p&&!ped.has(p)) orphans.add(p); }));
   const missingParent=new Set();
   ped.forEach((n,id)=>{ if((n.sire&&!n.dam)||(!n.sire&&n.dam)) missingParent.add(id); });
+  const known=[...ped.keys()];
+  const lev=(a,b)=>{
+    if(Math.abs(a.length-b.length)>2) return 9;
+    const m=a.length,n=b.length,d=Array.from({length:m+1},(_,i)=>[i,...Array(n).fill(0)]);
+    for(let j=0;j<=n;j++) d[0][j]=j;
+    for(let i=1;i<=m;i++) for(let j=1;j<=n;j++)
+      d[i][j]=Math.min(d[i-1][j]+1,d[i][j-1]+1,d[i-1][j-1]+(a[i-1]===b[j-1]?0:1));
+    return d[m][n];
+  };
   orphans.forEach(p=>{
     ped.set(p,{sire:null,dam:null});
-    meta.set(p,{line:'不明',file:'—',row:null});
-    issues.push({level:'要確認',id:p,kind:'親としてのみ登場（行がない）',detail:'誤記の可能性があります',action:'血縁ゼロの創始者として扱いました'});
+    const ln=parentLine.get(p)||null;
+    meta.set(p,{line:ln||'不明',file:'—',row:null});
+    const external=/_{2,}/.test(p);          // 「＿＿」を含むIDは外部施設の魚
+    let near=null,best=2;
+    if(!external) for(const k of known){ const d=lev(p,k); if(d<best){best=d;near=k;} }
+    if(external){
+      issues.push({level:'情報',id:p,kind:'外部施設から導入した魚',
+        detail:ln?`系統: ${ln}`:'IDに「＿＿」を含みます',
+        action:'血縁ゼロの創始者として扱いました（正常です）'});
+    } else {
+      issues.push({level:'要確認',id:p,
+        kind: ln? `他系統（${ln}）の親だが系譜がない` : '親としてのみ登場（行がない）',
+        detail: (ln? `${ln}の採卵履歴を読み込むとつながります。` : '導入時の魚か、誤記の可能性があります。')
+              + (near? `表の中に1文字違いの「${near}」があります（誤記かどうかは要確認）`:''),
+        action:'血縁ゼロの創始者として扱いました'});
+    }
   });
   // 循環参照
   const state=new Map(), cycles=[];
@@ -242,7 +293,14 @@ function buildPedigree(allRecords){
     const last=c[c.length-1], prev=c[c.length-2];
     if(prev){ const n=ped.get(prev); if(n.sire===last) n.sire=null; if(n.dam===last) n.dam=null; }
   });
-  return {ped,meta,issues,orphans,missingParent};
+  const labels=new Map();
+  meta.forEach(m=>{ if(m.line&&m.line!=='不明') labels.set(m.line,(labels.get(m.line)||0)+1); });
+  if(labels.size>1){
+    issues.push({level:'情報',id:'—',kind:'読み込んだ系統ラベル',
+      detail:[...labels.entries()].sort((a,b)=>b[1]-a[1]).map(([k,v])=>`${k}(${v})`).join('、'),
+      action:'別名で同じ系統を指している場合は、元の表で表記を統一してください'});
+  }
+  return {ped,meta,issues,orphans,missingParent,labels};
 }
 
 function makeEngine(ped,mode,unknownSet){
@@ -318,7 +376,16 @@ function makeEngine(ped,mode,unknownSet){
     go(x,1);
     mU.set(x,acc); return acc;
   };
-  return {F,kin,sib,self_,founders,depth,unknown};
+  // 系統構成: 創始者を系統ラベルごとに集計
+  const lineMix=(x,metaMap)=>{
+    const acc=new Map();
+    founders(x).forEach(([k,v])=>{
+      const ln=(metaMap.get(k)||{}).line||'不明';
+      acc.set(ln,(acc.get(ln)||0)+v);
+    });
+    return [...acc.entries()].sort((a,b)=>b[1]-a[1]);
+  };
+  return {F,kin,sib,self_,founders,depth,unknown,lineMix};
 }
 
 const BANDS=[
@@ -404,8 +471,7 @@ function candidates() {
     const e = ENG();
     for (let i = out.length - 1; i >= 0; i--) if (e.unknown(out[i].id) > lim + 1e-9) out.splice(i, 1);
   }
-  return (S.lineFilter.size ? out.filter(o => S.lineFilter.has(A.meta.get(o.id).line)) : out)
-    .sort((a, b) => a.id < b.id ? -1 : 1);
+  return out.sort((a, b) => a.id < b.id ? -1 : 1);
 }
 
 function units() {
@@ -419,13 +485,28 @@ function units() {
   return [...g.values()].sort((a, b) => a.line.localeCompare(b.line) || e.F(a.rep) - e.F(b.rep));
 }
 
+function passLine(a, b) {
+  const F = S.lineFilter;
+  if (!F.size) return true;
+  const ia = F.has(a.line), ib = F.has(b.line);
+  return S.openPartner ? (ia || ib) : (ia && ib);
+}
 function allPairs(us) {
   const e = ENG(), o = OTH(), out = [];
   for (let i = 0; i < us.length; i++) for (let j = i + 1; j < us.length; j++) {
     const a = us[i], b = us[j];
+    if (!passLine(a, b)) continue;
     out.push({ a, b, k: e.kin(a.rep, b.rep), k2: o.kin(a.rep, b.rep), cross: a.line !== b.line, maxF: Math.max(e.F(a.rep), e.F(b.rep)) });
   }
   return out.sort((x, y) => x.k - y.k || x.maxF - y.maxF);
+}
+function shownUnits(us) {
+  const F = S.lineFilter;
+  if (!F.size) return us;
+  if (!S.openPartner) return us.filter(u => F.has(u.line));
+  const keep = new Set();
+  us.forEach(a => us.forEach(b => { if (a !== b && passLine(a, b)) { keep.add(a); keep.add(b); } }));
+  return us.filter(u => keep.has(u));
 }
 function greedy(list, n) {
   const used = new Set(), sel = [];
@@ -440,7 +521,7 @@ function greedy(list, n) {
 function render() {
   renderRail();
   const A = S.analysis;
-  $('#count').textContent = A ? `系譜 ${A.ped.size} ID ／ 候補 ${candidates().length} ロット` : '';
+  $('#count').textContent = A ? `系譜 ${A.ped.size} ID ／ 候補 ${candidates().length} ロット${S.lineFilter.size ? '（表示中 ' + shownUnits(units()).length + '）' : ''}` : '';
   const m = $('#main');
   m.innerHTML = '';
   if (!A) {
@@ -466,8 +547,8 @@ function render() {
   m.appendChild(tabs);
   const us = units();
   if (S.tab === 'pairs') viewPairs(m, us);
-  if (S.tab === 'list') viewList(m, us);
-  if (S.tab === 'matrix') viewMatrix(m, us);
+  if (S.tab === 'list') viewList(m, shownUnits(us));
+  if (S.tab === 'matrix') viewMatrix(m, shownUnits(us));
   if (S.tab === 'issues') viewIssues(m);
 }
 
@@ -507,7 +588,10 @@ function renderRail() {
   $('#m-ind').setAttribute('aria-pressed', S.mode === 'ind');
   const lw = $('#linewrap'); lw.innerHTML = '';
   if (A && A.lines.length > 1) {
-    lw.appendChild(el('h2', '', '系統'));
+    lw.appendChild(el('h2', '', '系統で絞り込む'));
+    const hint = el('div', 'muted', '計算は常に全記録を使います。ここでの選択は表示の絞り込みだけで、系譜は切れません。');
+    hint.style.marginBottom = '6px';
+    lw.appendChild(hint);
     A.lines.forEach(l => {
       const b = el('button', 'linebtn', l);
       b.setAttribute('aria-pressed', S.lineFilter.has(l));
@@ -515,8 +599,15 @@ function renderRail() {
       lw.appendChild(b);
     });
     if (S.lineFilter.size) {
+      const lab = el('label', 'ck');
+      lab.style.margin = '8px 0 4px';
+      const cb = el('input'); cb.type = 'checkbox'; cb.checked = !!S.openPartner;
+      cb.onchange = e => { S.openPartner = e.target.checked; render(); };
+      lab.appendChild(cb);
+      lab.appendChild(el('span', '', '相手は他系統でもよい（系統間交配を探す）'));
+      lw.appendChild(lab);
       const b = el('button', 'linebtn muted', 'すべて表示に戻す');
-      b.onclick = () => { S.lineFilter.clear(); render(); };
+      b.onclick = () => { S.lineFilter.clear(); S.openPartner = false; render(); };
       lw.appendChild(b);
     }
   }
@@ -617,19 +708,22 @@ function viewList(m, us) {
   });
   m.appendChild(stat);
   const t = el('table');
-  t.innerHTML = '<thead><tr><th>ロット</th><th>系統</th><th>月齢</th><th>父</th><th>母</th><th>F</th><th>もう一方の解釈</th><th>判定</th><th>祖先不明</th><th>主な創始者</th></tr></thead>';
+  t.innerHTML = '<thead><tr><th>ロット</th><th>系統ラベル</th><th>実際の系統構成</th><th>月齢</th><th>父</th><th>母</th><th>F</th><th>もう一方の解釈</th><th>判定</th><th>祖先不明</th></tr></thead>';
   const tb = el('tbody');
   us.forEach(u => {
     const f = e.F(u.rep), b = band(f);
-    const fs = e.founders(u.rep).slice(0, 3).map(([k, v]) => `${k} ${(v * 100).toFixed(0)}%`).join(' / ');
+    const mix = e.lineMix(u.rep, S.analysis.meta);
+    const pure = mix.length === 1 && mix[0][0] === u.line;
+    const mixTxt = mix.slice(0, 4).map(([k, v]) => `${k} ${(v * 100).toFixed(0)}%`).join(' / ');
     const tr = el('tr');
     tr.innerHTML = `<td class="idtag">${esc(u.rep)}${u.members.length > 1 ? `<span class="muted"> 他${u.members.length - 1}</span>` : ''}</td>
-      <td class="muted">${esc(u.line)}</td><td class="num muted">${u.age === null ? '—' : u.age.toFixed(1)}</td>
+      <td class="muted">${esc(u.line)}</td>
+      <td style="${pure ? 'color:#7C918B;font-size:12px' : 'background:#EFF3E6;font-size:12px'}">${esc(mixTxt)}</td>
+      <td class="num muted">${u.age === null ? '—' : u.age.toFixed(1)}</td>
       <td class="muted">${esc(u.sire ?? '—')}</td><td class="muted">${esc(u.dam ?? '—')}</td>
       <td class="num" style="font-weight:600">${fmt(f)}</td><td class="num muted">${fmt(o.F(u.rep))}</td>
       <td><span class="chip" style="background:${b.bg};color:${b.fg}">${b.label}</span></td>
-      <td class="num" style="${e.unknown(u.rep) > 0.001 ? 'background:#F8DFCE;color:#8A4416' : 'color:#7C918B'}">${(e.unknown(u.rep) * 100).toFixed(0)}%</td>
-      <td class="muted">${esc(fs)}</td>`;
+      <td class="num" style="${e.unknown(u.rep) > 0.001 ? 'background:#F8DFCE;color:#8A4416' : 'color:#7C918B'}">${(e.unknown(u.rep) * 100).toFixed(0)}%</td>`;
     tb.appendChild(tr);
   });
   t.appendChild(tb); m.appendChild(t);
@@ -666,7 +760,17 @@ function viewMatrix(m, us) {
 function viewIssues(m) {
   const A = S.analysis;
   const n = el('div', 'note');
-  n.innerHTML = '誤記や欠損はF値を実際より低く見せます。<b>要確認</b>の項目は元の記録と照合してください。';
+  const missLine = new Map();
+  A.issues.forEach(i => {
+    const mm = /^他系統（(.+?)）の親だが系譜がない$/.exec(i.kind);
+    if (mm) missLine.set(mm[1], (missLine.get(mm[1]) || 0) + 1);
+  });
+  let extra = '';
+  if (missLine.size) {
+    extra = `<br><b>${[...missLine.entries()].map(([k, v]) => `${k}（${v}件）`).join('、')}</b> の採卵履歴を追加で読み込むと、系譜がつながって精度が上がります。`;
+  }
+  n.innerHTML = '誤記や欠損はF値を実際より低く見せます。<b>要確認</b>の項目は元の記録と照合してください。'
+    + '「◯◯の誤記の可能性」と出ている項目は、元のスプレッドシートを直せば解消します。' + extra;
   m.appendChild(n);
   const lab = el('label', 'ck');
   lab.style.marginBottom = '12px';
