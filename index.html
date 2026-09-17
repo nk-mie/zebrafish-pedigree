@@ -115,6 +115,7 @@ h2.sec span{font-family:var(--mono);font-size:12px;color:var(--muted);font-weigh
 .x{text-align:center;color:var(--muted);font-size:15px;font-family:var(--disp)}
 .flag{display:inline-block;background:var(--warn-soft);color:var(--warn);font-family:var(--mono);
       font-size:10.5px;font-weight:600;padding:1px 6px;border-radius:4px;white-space:nowrap}
+.flag.new{background:var(--accent-soft);color:var(--accent-ink)}
 .score{text-align:right;min-width:104px}
 .score .n{font-family:var(--disp);font-weight:900;font-size:25px;line-height:1;
           font-variant-numeric:tabular-nums;color:var(--gr)}
@@ -265,12 +266,17 @@ footer{margin-top:28px;font-size:12px;color:var(--muted);font-family:var(--mono)
       <label class="f" for="weight">重み付け</label>
       <input type="range" id="weight" min="0" max="100" step="5" value="65">
       <div class="wlabels"><span>日齢優先</span><span id="wtxt">血縁65:日齢35</span><span>血縁優先</span></div>
-      <label class="f" for="pcount" style="margin-top:14px">相手の系統で絞る</label>
+      <label class="f" for="partner" style="margin-top:14px">相手の系統で絞る</label>
       <select id="partner"><option value="">すべての系統</option></select>
+      <label class="f" for="ageRange" style="margin-top:14px">使う月齢の範囲</label>
+      <select id="ageRange">
+        <option value="3-12">3〜12mpf（12か月以上を除く）</option>
+        <option value="6-12">6〜12mpf（採卵適齢期のみ）</option>
+        <option value="3-24">3〜24mpf</option>
+        <option value="all">制限しない</option>
+      </select>
     </div>
     <div class="opts">
-      <span class="chk"><input type="checkbox" id="onlyPrime"><label for="onlyPrime"><b>採卵適齢期（6〜12mpf）</b>の水槽どうしに限る</label></span>
-      <span class="chk"><input type="checkbox" id="exAge" checked><label for="exAge">3mpf未満・24mpf超を除外</label></span>
       <span class="chk"><input type="checkbox" id="exE"><label for="exE">同腹相当（f≥0.25）を除外</label></span>
       <span class="chk"><input type="checkbox" id="divers" checked><label for="divers">同じ水槽の使い回しを抑える</label></span>
       <span class="chk"><input type="checkbox" id="onlyHist" checked><label for="onlyHist">この系統と<b>実際に交配した記録のある系統</b>に限定する</label></span>
@@ -363,14 +369,17 @@ footer{margin-top:28px;font-size:12px;color:var(--muted);font-family:var(--mono)
   <ul>
     <li><b>アウトクロスは遺伝子型を変えます。</b>変異体やTg系統をAB・AL・CS・NCなどの野生型にかけると、F1はすべてヘテロになります。系統維持としてのアウトクロスは「F1を作って、そこから選別して戻す」前提の操作なので、このツールはあくまで<b>血縁の観点でどの相手が有効か</b>を示すものです。目的の遺伝子型を維持する手順は別途の設計が必要です。</li>
     <li><b>「他系統」は既定でこの系統と実際に交配した記録のある相手だけを出します。</b>AB・AL・CS・NC・rose は近交対策の標準的なアウトクロス先ですが、<b>ある系統にそれらを使った記録がなければ、その系統では提案しません</b>。新規に導入する場合だけ「実際に交配した記録のある系統に限定する」を外してください。そのとき実績のない組み合わせには<b>「記録上初」</b>と表示され、実績のある相手より下に並びます。</li>
-    <li><b>NC と CS は候補に出てきません。</b>直近12か月に親として使われた記録がないためです（最終使用 NC 2024-03-06 / CS 2024-10-21）。現場に在庫があれば候補に加えられます。rose は <code>TG030(rose)</code> として5ロットが現役なので候補に入っています。</li>
+    <li id="cvOutcross"></li>
     <li><b>親IDは個体ではなく水槽（ロット）単位です。</b>血縁係数はロットを1個体とみなした代表値で、同一水槽内の個体差は表現できません。</li>
     <li><b>親IDが未記入の記録では、そこから先を「非血縁」として扱っています。</b>血統が途切れた先は関係なしと計算されるため、<b>表示されるfは実際の血縁の下限値</b>です。とくにAB・ALは多くの系統の起源なのに記録上の接続がない場合があり、f=0.000 が並びます。この「0.000」は<b>「記録上たどれる共通祖先がない」</b>という意味で、真に無縁である保証ではありません。</li>
-    <li><b>候補は「直近12か月に親として使われたID」だけです。</b>この1年使っていない現存ロットは出てきません。</li>
-    <li><b>日齢はIDの日付コード（例 <code>260904nk04</code> → 2026-09-04）から算出しています。</b>この形式でないIDや日付が未来になっているIDは「日齢不明」扱いです。基準日は集計日で、ページを開いた日ではありません。</li>
+    <li id="cvCutoff"></li>
+    <li id="cvAgeRange"></li>
+    <li id="cvUnused"></li>
+    <li id="cvAge"></li>
     <li><b>系統名は括弧の前の基底コードで統合しています。</b><code>MK086</code>/<code>MK086(AL)</code>、<code>TG037(fli-1)</code>/<code>fli-1</code>、<code>TG030(rose)</code>/<code>rose</code> は同一系統として扱いました。<code>TG033×rose</code> のような交配由来のラベルは独立した系統として残しています。</li>
     <li><b>f（血縁係数）はそのペアから生まれる子の期待近交係数</b>です。目安は 0.25＝同腹きょうだい、0.125＝いとこ、0.0625＝はとこ。</li>
     <li>産卵数は<b>参考表示のみ</b>で順位計算には入れていません。</li>
+    <li id="cvSource"></li>
   </ul>
 </details>
 
@@ -706,6 +715,19 @@ function build(rows, opts) {
     }
   }
 
+  /* 入庫済みロットの把握。採卵実績のない在庫も候補に入れるために先に求める */
+  const bornOf = new Map(), stocked = new Set();
+  for (const r of body) {
+    const k = cell(r, 'kind');
+    if (!(k && String(k).trim().startsWith('採卵'))) continue;
+    const cid = normId(cell(r, 'id'));
+    if (!cid) continue;
+    const d = parseDate(cell(r, 'set')) ?? parseDate(cell(r, 'ts'));
+    if (d !== null && (!bornOf.has(cid) || d < bornOf.get(cid))) bornOf.set(cid, d);
+    const sv = cell(r, 'stock');
+    if (sv !== null && String(sv).trim().startsWith('入庫')) stocked.add(cid);
+  }
+
   let cands = [];
   for (const [pid, u] of use) {
     if (u.last === null || u.last < CUTOFF) continue;
@@ -727,6 +749,31 @@ function build(rows, opts) {
       eggs_n: u.eggs.length,
       F: pyRound(inbreeding(pid), 4),
       gen: genDepth(pid),
+      unused: false, stocked: stocked.has(pid),
+    });
+  }
+
+  /* 入庫済みだが、まだ親として使われていないロットも候補に加える。
+     これを入れないと、6〜12mpf の在庫がありながら適齢超過のロットばかり
+     推薦されてしまう（MK023 など16系統で発生していた）。
+     雌雄の記録がないので、オス側・メス側どちらにも出せる扱いにする。 */
+  const alreadyCand = new Set(cands.map(c => c.id));
+  for (const pid of stocked) {
+    if (alreadyCand.has(pid)) continue;
+    if (use.has(pid)) continue;                       // 親として使った記録がある
+    const b = birth.has(pid) ? birth.get(pid) : null;
+    if (b === null) continue;                          // 日齢が分からないものは出さない
+    const age = daysBetween(TODAY, b);
+    if (age < 90 || age > 730) continue;               // 3mpf未満・24mpf超は対象外
+    const st = strainOf.get(pid) || null;
+    cands.push({
+      id: pid, strain: st, base: baseStrain(st),
+      birth: isoOf(b), age_days: age,
+      n_use: 0, n_sire: 0, n_dam: 0, last_use: null, recent12: 0,
+      eggs_mean: null, eggs_n: 0,
+      F: pyRound(inbreeding(pid), 4),
+      gen: genDepth(pid),
+      unused: true, stocked: true,
     });
   }
 
@@ -819,9 +866,13 @@ function build(rows, opts) {
   }
 
   const strainInfo = {};
+  // 未使用ロットは雌雄の記録がないので、どちらの側にも立てる
+  const canSire = m => m.n_sire > 0 || m.unused;
+  const canDam = m => m.n_dam > 0 || m.unused;
+
   for (const [st, members] of strains) {
-    const sires = members.filter(m => m.n_sire > 0);
-    const dams = members.filter(m => m.n_dam > 0);
+    const sires = members.filter(canSire);
+    const dams = members.filter(canDam);
     const fs = [];
     for (const s of sires) for (const d of dams) if (s.id !== d.id) fs.push(kin2(s.id, d.id));
 
@@ -830,8 +881,8 @@ function build(rows, opts) {
     for (const [other, om] of strains) {
       if (other === st) continue;
       const cf = [];
-      const oDams = om.filter(m => m.n_dam > 0);
-      const oSires = om.filter(m => m.n_sire > 0);
+      const oDams = om.filter(canDam);
+      const oSires = om.filter(canSire);
       for (const s of sires) for (const d of oDams) cf.push(kin2(s.id, d.id));
       for (const s of oSires) for (const d of dams) cf.push(kin2(s.id, d.id));
       if (cf.length) pscore.set(other, Math.min.apply(null, cf));
@@ -872,17 +923,35 @@ function build(rows, opts) {
 
     strainInfo[st] = {
       n: members.length, n_sire: sires.length, n_dam: dams.length,
+      n_unused: members.filter(m => m.unused).length,
       n_pairs: fs.length,
       min_f: fs.length ? pyRound(Math.min.apply(null, fs), 4) : null,
       min_f_cross: bestF !== null ? pyRound(bestF, 4) : null,
       best_cross_partner: bestP,
       mean_F: pyRound(members.reduce((s, m) => s + m.F, 0) / members.length, 4),
-      last_use: members.reduce((s, m) => (m.last_use > s ? m.last_use : s), members[0].last_use),
+      last_use: members.reduce((s, m) => (m.last_use && (!s || m.last_use > s) ? m.last_use : s), null),
       hist_partners: hp,
       cross_n: hp.reduce((s, h) => s + h[1], 0),
       min_f_hist: bestFHist,
       best_hist_partner: bestPHist,
       n_hist_avail: hp.filter(h => strains.has(h[0])).length,
+    };
+  }
+
+  /* ---------- 標準アウトクロス系統がいま候補にいるか ---------- */
+  // NC や CS のように「直近12か月に親として使われていない」系統は候補に出ない。
+  // 読み込むCSVで変わるので、固定で書かずにここで求める。
+  const outcrossStatus = {};
+  for (const st of OUTCROSS_ORDER) {
+    let last = null;
+    for (const [pid, u] of use) {
+      if (baseStrain(strainOf.get(pid)) !== st) continue;
+      if (u.last !== null && (last === null || u.last > last)) last = u.last;
+    }
+    outcrossStatus[st] = {
+      in_cands: strains.has(st),
+      n_cands: strains.has(st) ? strains.get(st).length : 0,
+      last_use: last !== null ? isoOf(last) : null,
     };
   }
 
@@ -895,17 +964,6 @@ function build(rows, opts) {
 
   /* ---------- 採卵適齢期（6-12mpf）の在庫 ---------- */
   const PRIME_LO = 180, PRIME_HI = 365;
-  const bornOf = new Map(), stocked = new Set();
-  for (const r of body) {
-    const k = cell(r, 'kind');
-    if (!(k && String(k).trim().startsWith('採卵'))) continue;
-    const cid = normId(cell(r, 'id'));
-    if (!cid) continue;
-    const d = parseDate(cell(r, 'set')) ?? parseDate(cell(r, 'ts'));
-    if (d !== null && (!bornOf.has(cid) || d < bornOf.get(cid))) bornOf.set(cid, d);
-    const sv = cell(r, 'stock');
-    if (sv !== null && String(sv).trim().startsWith('入庫')) stocked.add(cid);
-  }
 
   const usedAsParent = new Set();
   for (const rec of records) for (const p of [rec.sire, rec.dam]) if (p) usedAsParent.add(p);
@@ -954,7 +1012,7 @@ function build(rows, opts) {
   /* ---------- 出力（data.js と同じ構造） ---------- */
   const candsOut = {};
   const KEEP = ['strain', 'base', 'birth', 'age_days', 'n_use', 'n_sire', 'n_dam',
-    'last_use', 'recent12', 'eggs_mean', 'eggs_n', 'F', 'gen'];
+    'last_use', 'recent12', 'eggs_mean', 'eggs_n', 'F', 'gen', 'unused', 'stocked'];
   for (const c of cands) {
     const o = {}; KEEP.forEach(k => o[k] = c[k]); candsOut[c.id] = o;
   }
@@ -976,9 +1034,11 @@ function build(rows, opts) {
     cands: candsOut,
     kin: KIN, anc: ANC, ancInfo: ANCINFO,
     hist: histOut, outcross: OUTCROSS, outcrossOrder: OUTCROSS_ORDER,
+    outcrossStatus: outcrossStatus,
     strains: strainInfo,
     stats: {
       n_egg_records: records.length, n_cands: cands.length,
+      n_cands_unused: cands.filter(c => c.unused).length,
       n_strains: strains.size,
       n_cross_records: crossTotal, n_cross_combos: hist.size,
       date_min: isoOf(Math.min.apply(null, dates)),
@@ -1007,9 +1067,64 @@ window.ZF_START = function(){
     ["集計日", D.generated],
     ["採卵記録", D.stats.n_egg_records.toLocaleString()+"件（"+D.stats.date_min+"〜"+D.stats.date_max+"）"],
     ["うち異系統交配", D.stats.n_cross_records.toLocaleString()+"件 / "+D.stats.n_cross_combos+"通りの組み合わせ"],
-    ["候補ID", D.stats.n_cands+"（"+D.cutoff+"以降に親として使用）/ "+D.stats.n_strains+"系統"]
+    ["候補ID", D.stats.n_cands+"（"+D.cutoff+"以降に親として使用 "+
+      (D.stats.n_cands-(D.stats.n_cands_unused||0))+" ＋ 入庫済み未使用 "+(D.stats.n_cands_unused||0)+
+      "）/ "+D.stats.n_strains+"系統"]
   ].map(function(r){ return "<span><b>"+r[0]+"</b> "+r[1]+"</span>"; }).join("");
   $("foot").textContent = "血縁係数は標準的な kinship coefficient の再帰計算（同腹きょうだい=0.25、親子=0.25、自己=0.5(1+F)で検証済み）。集計日 " + D.generated + "。";
+
+  /* ---- 「前提と限界」のうち、読み込んだCSVで変わる項目 ---- */
+  (function(){
+    var OS = D.outcrossStatus || {};
+    var out = [], inn = [];
+    D.outcrossOrder.forEach(function(s){
+      var o = OS[s], nm = (D.outcross[s] && D.outcross[s].label) || s;
+      if (!o) return;
+      var tag = nm + "（" + s + "）";
+      if (o.in_cands) inn.push(tag + " " + o.n_cands + "ロット");
+      else out.push(tag + (o.last_use ? "：最終使用 " + o.last_use : "：使用記録なし"));
+    });
+    $("cvOutcross").innerHTML = out.length
+      ? "<b>標準アウトクロス系統のうち、いま候補に出てこないものがあります。</b>" +
+        "直近12か月に親として使われた記録がないためです — " + out.join(" / ") +
+        "。現場に在庫があれば候補に加えられます。" +
+        (inn.length ? "候補に入っているのは " + inn.join("、") + " です。" : "")
+      : "<b>標準アウトクロス系統はすべて候補に入っています。</b>" + inn.join("、") + "。";
+
+    var nUnused = D.stats.n_cands_unused || 0;
+    $("cvCutoff").innerHTML =
+      "<b>候補は2種類あります。</b>" +
+      "①直近12か月（いまのデータでは <b>" + D.cutoff + " 以降</b>）に親として使われたID。" +
+      "②<b>入庫済みで、まだ親として使っていない 3〜24mpf のロット</b>（" + nUnused + "件）。" +
+      "②を入れていないと、6〜12mpf の在庫がありながら適齢を過ぎたロットばかり推薦される状態になります。" +
+      "どちらにも当てはまらないロット（入庫記録がない、日齢が分からない、24mpf超）は出てきません。";
+
+    $("cvAgeRange").innerHTML =
+      "<b>既定では 12か月（12mpf）以上の魚を除いています。</b>" +
+      "この施設では12か月を超えた魚を老魚として処分することが多いため、推薦しても使えないからです。" +
+      "残しているロットを含めたいときは「使う月齢の範囲」を <b>3〜24mpf</b> に、" +
+      "採卵適齢期だけに絞りたいときは <b>6〜12mpf</b> に変えてください。" +
+      "日齢が分からないロットは、どの範囲でも除外せずに残しています（現場で確認してください）。";
+
+    $("cvUnused").innerHTML =
+      "<b>「未使用」と付いたロットは、雌雄が確認できていません。</b>" +
+      "まだ採卵に使った記録がないため、オス側・メス側のどちらにも出しています。" +
+      "1つの水槽に雌雄が同居している前提なので、<b>実際に組む前に現場で雌雄と在庫を確認してください。</b>" +
+      "産卵実績もないため、平均産卵数は表示されません。";
+
+    $("cvAge").innerHTML =
+      "<b>日齢はIDの日付コード（例 <code>260904nk04</code> → 2026-09-04）から算出しています。</b>" +
+      "この形式でないIDや日付が未来になっているIDは「日齢不明」扱いです。" +
+      "<b>基準日はCSVを読み込んだ日（" + D.generated + "）</b>で、記録の最終日ではありません。" +
+      "日をまたいで開いたままにしていると日齢がずれるので、読み込み直してください。";
+
+    $("cvSource").innerHTML =
+      "<b>結果はいま読み込んでいるCSVがすべてです。</b>" +
+      "採卵記録 " + D.stats.n_egg_records.toLocaleString() + "件（" + D.stats.date_min + "〜" +
+      D.stats.date_max + "）を使っています。" +
+      "このページ自体は採卵記録を持っておらず、読み込んだファイルはお使いのパソコンの中だけで処理されます。" +
+      "新しい記録を反映するには、スプレッドシートから書き出し直して読み込んでください。";
+  })();
 
   var order = Object.keys(S).sort(function(a,b){
     return S[b].n - S[a].n || a.localeCompare(b);
@@ -1030,16 +1145,33 @@ window.ZF_START = function(){
   }
   // 採卵適齢期は 6mpf〜12mpf（180〜365日）
   var PLO = D.prime[0], PHI = D.prime[1];
+  // 日齢スコアは帯の中でも連続的に変える。段階式だと 15.1mpf と 17.4mpf が
+  // 同点になり、血縁係数だけで順位が決まって古いロットが上に来てしまう。
   function ageScore(d){
-    if(d==null)   return [0.5, "日齢不明"];
-    if(d<90)      return [0.12,"未成熟 3mpf未満"];
-    if(d<PLO)     return [0.60,"適齢前 3-6mpf"];
-    if(d<=PHI)    return [1.00,"適齢 6-12mpf"];
-    if(d<=550)    return [0.70,"超過 12-18mpf"];
-    if(d<=730)    return [0.40,"高齢 18-24mpf"];
-    return [0.20,"要更新 24mpf超"];
+    if(d==null) return [0.50,"日齢不明"];
+    var lerp = function(x,x0,x1,y0,y1){ return y0 + (y1-y0)*(x-x0)/(x1-x0); };
+    if(d<90)    return [0.10,"未成熟 3mpf未満"];
+    if(d<PLO)   return [lerp(d, 90,PLO, 0.25,1.00), "適齢前 3-6mpf"];
+    if(d<=PHI)  return [1.00,"適齢 6-12mpf"];
+    if(d<=550)  return [lerp(d, PHI,550, 1.00,0.55), "超過 12-18mpf"];
+    if(d<=730)  return [lerp(d, 550,730, 0.55,0.20), "高齢 18-24mpf"];
+    if(d<=1095) return [lerp(d, 730,1095, 0.20,0.10), "要更新 24mpf超"];
+    return [0.10,"要更新 24mpf超"];
   }
   function isPrime(d){ return d!=null && d>=PLO && d<=PHI; }
+  // 月齢の範囲。この施設では12か月を超えた魚は老魚として処分することが多いため、
+  // 3〜12mpf を既定にしている。
+  var AGE_RANGES = {
+    "3-12": {lo:90,  hi:PHI, label:"3〜12mpf"},
+    "6-12": {lo:PLO, hi:PHI, label:"6〜12mpf（採卵適齢期）"},
+    "3-24": {lo:90,  hi:730, label:"3〜24mpf"},
+    "all":  null
+  };
+  // 日齢が分からないロットは範囲で弾かない（記録上たどれないだけなので現場判断に委ねる）
+  function inRange(d, rg){ return d==null || (d>=rg.lo && d<=rg.hi); }
+  // まだ親として使っていない入庫ロットは雌雄の記録がないため、どちらの側にも立てる
+  function canSire(id){ var c=C[id]; return !!c && (c.n_sire>0 || c.unused); }
+  function canDam(id){ var c=C[id]; return !!c && (c.n_dam>0 || c.unused); }
   function mpf(d){ return d==null ? "—" : (d/30.44).toFixed(1); }
   function grade(f){
     if(f<0.03125) return ["A","記録上の共通祖先なし"];
@@ -1061,8 +1193,8 @@ window.ZF_START = function(){
     return best;
   }
 
-  var state = { strain: order[0], mode:"same", w:0.65, exAge:true, exE:false,
-                divers:true, onlyHist:true, onlyPrime:false, partner:"", limit:12 };
+  var state = { strain: order[0], mode:"same", w:0.65, ageRange:"3-12", exE:false,
+                divers:true, onlyHist:true, partner:"", limit:12 };
 
   // この系統と交配実績のある相手系統（現在候補があるものだけ）
   function histPartners(A){
@@ -1094,14 +1226,14 @@ window.ZF_START = function(){
     });
     function add(s,d){ if(s!==d) list.push({s:s,d:d}); }
     if(state.mode==="same" || state.mode==="all"){
-      mine.forEach(function(s){ if(C[s].n_sire>0)
-        mine.forEach(function(d){ if(C[d].n_dam>0) add(s,d); }); });
+      mine.forEach(function(s){ if(canSire(s))
+        mine.forEach(function(d){ if(canDam(d)) add(s,d); }); });
     }
     if(state.mode==="cross" || state.mode==="all"){
-      mine.forEach(function(s){ if(C[s].n_sire>0)
-        others.forEach(function(d){ if(C[d].n_dam>0) add(s,d); }); });
-      others.forEach(function(s){ if(C[s].n_sire>0)
-        mine.forEach(function(d){ if(C[d].n_dam>0) add(s,d); }); });
+      mine.forEach(function(s){ if(canSire(s))
+        others.forEach(function(d){ if(canDam(d)) add(s,d); }); });
+      others.forEach(function(s){ if(canSire(s))
+        mine.forEach(function(d){ if(canDam(d)) add(s,d); }); });
     }
     list.forEach(function(p){
       var a=C[p.s], b=C[p.d];
@@ -1120,13 +1252,9 @@ window.ZF_START = function(){
 
   function ranked(){
     var list = buildPairs();
-    if(state.exAge) list = list.filter(function(p){
-      var a=C[p.s], b=C[p.d];
-      return !((a.age_days!=null&&(a.age_days<90||a.age_days>730)) ||
-               (b.age_days!=null&&(b.age_days<90||b.age_days>730)));
-    });
-    if(state.onlyPrime) list = list.filter(function(p){
-      return isPrime(C[p.s].age_days) && isPrime(C[p.d].age_days);
+    var rg = AGE_RANGES[state.ageRange];
+    if(rg) list = list.filter(function(p){
+      return inRange(C[p.s].age_days, rg) && inRange(C[p.d].age_days, rg);
     });
     if(state.exE) list = list.filter(function(p){ return p.f < 0.25; });
     // 実績のある相手 → 標準アウトクロス系統（実績なし） → その他 の順
@@ -1155,11 +1283,13 @@ window.ZF_START = function(){
     var used = role.indexOf("♂")===0 ? c.n_sire : c.n_dam;
     var zero = (c.eggs_n>0 && c.eggs_mean===0);
     var stTag = c.base!==state.strain ? '<span class="st">'+(c.strain||c.base)+'</span>' : '';
+    var meta = c.unused
+      ? '入庫済み・<b>まだ採卵に使っていません</b>（雌雄は現場で確認）'
+      : '採卵'+(used||0)+'回' + (c.eggs_mean!=null ? '・平均'+c.eggs_mean+'粒' : '') +
+        (zero ? ' <span class="flag">産卵実績0</span>' : '');
     return '<div class="fish"><div class="role">'+role+'</div>'+
-      '<div class="id">'+id+stTag+'</div>'+
-      '<div class="meta">'+ageTxt(c)+' ／ 採卵'+(used||0)+'回'+
-      (c.eggs_mean!=null ? '・平均'+c.eggs_mean+'粒' : '')+
-      (zero ? ' <span class="flag">産卵実績0</span>' : '')+'</div></div>';
+      '<div class="id">'+id+stTag+(c.unused?' <span class="flag new">未使用</span>':'')+'</div>'+
+      '<div class="meta">'+ageTxt(c)+' ／ '+meta+'</div></div>';
   }
 
   function render(){
@@ -1168,18 +1298,20 @@ window.ZF_START = function(){
     var xf = state.onlyHist ? info.min_f_hist : info.min_f_cross;
     var xp = state.onlyHist ? info.best_hist_partner : info.best_cross_partner;
     $("tiles").innerHTML = [
-      ["候補ID数", info.n, "オス側 "+info.n_sire+" / メス側 "+info.n_dam],
+      ["候補ID数", info.n, "オス側 "+info.n_sire+" / メス側 "+info.n_dam +
+        (info.n_unused ? "（うち未使用 "+info.n_unused+"）" : "")],
       ["同系統の最良f", fmt(info.min_f), info.n_pairs+"通り中"],
       [(state.onlyHist?"実績のある他系統":"他系統")+"の最良f", fmt(xf), xp ? "相手 "+xp : "該当なし"],
       ["候補の平均近交係数", fmt(info.mean_F), "現在の系統の近交度"],
-      ["最終採卵", info.last_use, "この系統の直近の採卵日"]
+      ["最終採卵", info.last_use || "—",
+        info.last_use ? "この系統の直近の採卵日" : "この系統は採卵に使った記録がありません"]
     ].map(function(t){
       return '<div class="tile"><div class="k">'+t[0]+'</div><div class="v">'+t[1]+'</div><div class="s">'+t[2]+'</div></div>';
     }).join("");
 
     var nb = "";
     if(info.n_pairs===0){
-      nb += '<div class="note bad"><b>この系統は同系統内でペアを組めません。</b>直近12か月に親として使われたIDが'+info.n+'件しかなく、オス側／メス側の両方がそろっていません。「他系統」に切り替えてアウトクロス先を探してください。</div>';
+      nb += '<div class="note bad"><b>この系統は同系統内でペアを組めません。</b>候補が'+info.n+'件しかなく、オス側／メス側の両方がそろっていません。「他系統」に切り替えてアウトクロス先を探してください。</div>';
     } else if(info.min_f>=0.25){
       nb += '<div class="note bad"><b>同系統内はどの組み合わせも同腹きょうだい相当以上になります（最良 f='+fmt(info.min_f)+'）。</b>系統内での血の更新は限界です。'+
         (xf!=null ? '「他系統」に切り替えると f='+fmt(xf)+' まで下げられます（例：'+xp+'）。' : '')+'</div>';
@@ -1208,6 +1340,28 @@ window.ZF_START = function(){
     $("strainNote").innerHTML = nb;
 
     var list = ranked();
+
+    // 月齢の範囲で0件になったときは、広げたら何通りになるかを示す
+    if(!list.length && state.ageRange!=="all"){
+      var keep = state.ageRange, alt = [];
+      ["3-12","6-12","3-24","all"].forEach(function(k){
+        if(k===keep) return;
+        state.ageRange = k;
+        var n = ranked().length;
+        if(n) alt.push({k:k, n:n, label:(AGE_RANGES[k] ? AGE_RANGES[k].label : "制限しない")});
+      });
+      state.ageRange = keep;
+      var cur = AGE_RANGES[keep] ? AGE_RANGES[keep].label : "";
+      $("strainNote").innerHTML += '<div class="note bad"><b>'+cur+
+        ' の範囲では組める相手がいません。</b>'+
+        (alt.length
+          ? 'この系統で使える魚が12か月を超えているか、片方の性しか残っていない可能性があります。範囲を広げると '+
+            alt.map(function(a){ return a.label+' で'+a.n.toLocaleString()+'通り'; }).join('、')+
+            ' になります。<br><b>いま12か月未満の在庫を確保しておかないと、この系統は次の更新ができなくなります。</b>'
+          : 'どの範囲でも組める相手がいません。「採卵適齢期」タブで在庫を確認してください。')+
+        '</div>';
+    }
+
     $("pairCount").textContent = list.length
       ? (list.length.toLocaleString()+"通り中 上位"+Math.min(state.limit,list.length)+"件を表示")
       : "条件に合うペアがありません";
@@ -1288,7 +1442,7 @@ window.ZF_START = function(){
         '<td class="num">'+(gain?'<span class="arrow">▼ </span>':'')+fmt(r.min_f_cross)+'</td>'+
         '<td class="mono">'+(r.best_cross_partner||"—")+'</td>'+
         '<td class="num">'+fmt(r.mean_F)+'</td>'+
-        '<td class="mono">'+r.last_use+'</td>'+
+        '<td class="mono">'+(r.last_use||'—')+'</td>'+
         '<td class="mono" style="white-space:normal">'+r.hist+'</td></tr>';
     }).join("");
   }
@@ -1338,12 +1492,16 @@ window.ZF_START = function(){
     });
   });
   $("partner").addEventListener("change", function(e){ state.partner=e.target.value; state.limit=12; render(); });
+  $("ageRange").value = state.ageRange;
+  $("ageRange").addEventListener("change", function(e){
+    state.ageRange=e.target.value; state.limit=12; render();
+  });
   $("weight").addEventListener("input", function(e){
     state.w=e.target.value/100;
     $("wtxt").textContent="血縁"+e.target.value+":日齢"+(100-e.target.value);
     render();
   });
-  ["exAge","exE","divers","onlyPrime"].forEach(function(k){
+  ["exE","divers"].forEach(function(k){
     $(k).addEventListener("change", function(e){ state[k]=e.target.checked; render(); });
   });
   $("onlyHist").addEventListener("change", function(e){
